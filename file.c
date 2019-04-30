@@ -229,7 +229,7 @@ size_t fread_async(file_handle* fh, void* buf, size_t count){
 
 
 int fhprintf_async(file_handle* fh, const char* format, ...){
-    char buffer[1024];
+    char buffer[4096];
     int ret;
     va_list args;
     va_start(args, format);

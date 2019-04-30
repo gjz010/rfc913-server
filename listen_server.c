@@ -7,6 +7,8 @@
 #include "errno.h"
 #include "assert.h"
 #include "unistd.h"
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 typedef struct {
     poll_queue* event_queue;
     file_handle* listen_fh;
@@ -28,6 +30,11 @@ void listen_server_entry(void* listen_socket){
             printf("accept\n");
             // Start a client coroutine here.
             file_handle* fh=wrap_fd(ret);
+            //int optval=1;
+            //struct timeval tv;
+            //memset(&tv, 0, sizeof(tv));
+            //tv.tv_sec=0;
+            //assert()
             register_file(event_queue, fh);
             coroutine* client_co=malloc(sizeof(coroutine));
             coroutine_start(client_co, client_handler, fh);
@@ -55,6 +62,10 @@ coroutine* start_listen_server(listen_server_options* options){
     if(setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(int))<0) goto cleanup_socket;
     optval=1;
     if(setsockopt(listenfd, SOL_SOCKET, SO_REUSEPORT, &optval, sizeof(int))<0) goto cleanup_socket;
+    optval=1;
+    if(setsockopt(listenfd, IPPROTO_TCP, TCP_DEFER_ACCEPT, &optval, sizeof(int))<0){
+        printf("warning: TCP_DEFER_ACCEPT failed. this may happen when you are using WSL.\n");
+    }
     struct sockaddr_in listenaddr;
     listenaddr.sin_family=AF_INET;
     listenaddr.sin_addr.s_addr=inet_addr(options->listen_addr);
@@ -75,6 +86,7 @@ coroutine* start_listen_server(listen_server_options* options){
     coroutine_await(lc);
     return lc;
 cleanup_socket:
+    perror("Something is wrong");
     close(listenfd);
 onerror:
     return 0;

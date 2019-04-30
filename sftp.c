@@ -14,6 +14,8 @@
 #include "unistd.h"
 #include <fcntl.h>
 #include <string.h>
+#include "netinet/in.h"
+#include "netinet/tcp.h"
 inline void ex_putchar_async(file_handle* fh, char ch){
     ex_fwrite_async(fh, &ch, 1);
 }
@@ -73,6 +75,19 @@ void sftp_conn(void* pfh){
             shutdown(fh->fd, SHUT_RDWR);
             coroutine_throw;
         }
+        int keepalive_enabled = 1;
+        int keepalive_time = 180;
+        int keepalive_count = 3;
+        int keepalive_interval = 10;
+        int ssoret;
+        ssoret=setsockopt(fh->fd, SOL_SOCKET, SO_KEEPALIVE, &keepalive_enabled, sizeof(int));
+        if(ssoret==-1) coroutine_throw;
+        ssoret=setsockopt(fh->fd, IPPROTO_TCP, TCP_KEEPIDLE, &keepalive_time, sizeof(int));
+        if(ssoret==-1) coroutine_throw;
+        ssoret=setsockopt(fh->fd, IPPROTO_TCP, TCP_KEEPCNT, &keepalive_count, sizeof(int));
+        if(ssoret==-1) coroutine_throw;
+        ssoret=setsockopt(fh->fd, IPPROTO_TCP, TCP_KEEPINTVL, &keepalive_interval, sizeof(int));
+        if(ssoret==-1) coroutine_throw;
         disable_nagle(fh);
 
         ex_fhprintf_async(fh, "+MIT-XX SFTP Service made by gjz010 with love!");
@@ -267,6 +282,14 @@ void sftp_conn(void* pfh){
                             ex_putchar_async(fh, 0);
                             close(helper_fd);
                             helper_fd=-1;
+                            continue;
+                        }
+                        if((statbuf.st_mode & S_IFMT)!=S_IFREG){
+                            ex_fhprintf_async(fh, "-You can only retrive regular file.");
+                            ex_putchar_async(fh, 0);
+                            close(helper_fd);
+                            helper_fd=-1;
+                            continue;
                         }
                         ex_fhprintf_async(fh, " %ld", statbuf.st_size);
                         ex_putchar_async(fh, 0);
@@ -361,7 +384,7 @@ void sftp_conn(void* pfh){
                             }
                             ex_putchar_async(fh, 0);
                             struct stat statbuf;
-                            if(fstat(helper_fd, &statbuf)!=0){
+                            if(fstat(helper_fd, &statbuf)==0){
                                 original_size=statbuf.st_size;
                             }else{
                                 // failed to get the stat, then silently close the fd.
