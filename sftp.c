@@ -63,9 +63,9 @@ void sftp_conn(void* pfh){
     volatile DIR* cwd=opendir("./");
     volatile int helper_fd=-1;
     char command_buffer[1024];
-    char data_buffer[1024];
+    char data_buffer[8192];
     if(coroutine_catch){ // exception handler.
-        printf("ouch!\n");
+        //printf("ouch!\n");
         goto shutdown;
     }else{
         struct linger lg;
@@ -110,6 +110,11 @@ void sftp_conn(void* pfh){
                 continue;
             }
             // we've got the command, then parse it.
+            if(!strncasecmp(command_buffer, "DONE", 4)){
+                ex_fhprintf_async(fh, "+MIT-XX closing connection. Goodbye and have a nice dream!");
+                ex_putchar_async(fh, 0);
+                break; //goto shutdown.
+            }else
             if(!strncasecmp(command_buffer, "USER", 4)){
                 if(auth_state==0){
                     //This is safe.
@@ -131,15 +136,20 @@ void sftp_conn(void* pfh){
             }else
             if(!strncasecmp(command_buffer, "PASS", 4)){
                 // sleep a second here to prevent brute-force attack.
-                sleep_async(1500);
-                if(check_username_and_password(username, command_buffer+5)){
-                    auth_state=2;
-                    ex_fhprintf_async(fh, "! %s logged in. Have fun...", username);
+                if(auth_state==2){
+                    ex_fhprintf_async(fh, "-You have already logged in as %s.", username);
                     ex_putchar_async(fh, 0);
                 }else{
-                    ex_fhprintf_async(fh, "-Wrong password, try again");
-                    ex_putchar_async(fh, 0);
-                    auth_state=0;
+                    sleep_async(2000);
+                    if(check_username_and_password(username, command_buffer+5)){
+                        auth_state=2;
+                        ex_fhprintf_async(fh, "! %s logged in. Have fun...", username);
+                        ex_putchar_async(fh, 0);
+                    }else{
+                        ex_fhprintf_async(fh, "-Wrong password, try again");
+                        ex_putchar_async(fh, 0);
+                        auth_state=0;
+                    }
                 }
             }else
             if(auth_state!=2){
@@ -162,7 +172,6 @@ void sftp_conn(void* pfh){
                         //printf("found\n");
                         int verbose=(command_buffer[5]=='v' || command_buffer[5]=='V');
                         struct dirent* elem;
-                        ex_fhprintf_async(fh, "+%s:\r\n", command_buffer+7);
                         ex_fhprintf_async(fh, "+%s:\r\n", command_buffer+7);
                         if(verbose){
                             ex_fhprintf_async(fh, "File name\tType\tSize(Bytes)\r\n");
@@ -267,7 +276,7 @@ void sftp_conn(void* pfh){
                 }
             }else
             if(!strncasecmp(command_buffer, "DONE", 4)){
-                ex_fhprintf_async(fh, "+Goodbye and have a nice dream!");
+                ex_fhprintf_async(fh, "+MIT-XX closing connection. Goodbye and have a nice dream!");
                 ex_putchar_async(fh, 0);
                 break; //goto shutdown.
             }else
@@ -330,7 +339,7 @@ void sftp_conn(void* pfh){
                 }
             }else
             if(!strncasecmp(command_buffer, "STOR", 4)){
-                if(len>=10 && !(strncasecmp(command_buffer+5, "NEW", 3) && strncasecmp(command_buffer+5, "OLD", 4) && strncasecmp(command_buffer+5, "APP", 3) )){
+                if(len>=10 && !(strncasecmp(command_buffer+5, "NEW", 3) && strncasecmp(command_buffer+5, "OLD", 3) && strncasecmp(command_buffer+5, "APP", 3) )){
                     char name_buffer[1024]; // a bit too wasteful?
                     int option=0;
                     int open_errno=0;
@@ -339,7 +348,7 @@ void sftp_conn(void* pfh){
                     //printf("store\n");
                     if (!strncasecmp(command_buffer+5, "NEW", 3)){
                         option=0;
-                        helper_fd=openat(dirfd(cwd), command_buffer+9, O_WRONLY|O_EXCL|O_CREAT, 00700);
+                        helper_fd=openat(dirfd(cwd), command_buffer+9, O_WRONLY|O_EXCL|O_CREAT, 00644);
                         //printf("opened %d %d\n", helper_fd, errno);
                         if(helper_fd<0){
                             helper_fd=-1;
@@ -357,7 +366,7 @@ void sftp_conn(void* pfh){
                     if (!strncasecmp(command_buffer+5, "OLD", 3)){
                         option=1;
                         int exist=(faccessat(dirfd(cwd), command_buffer+9, W_OK, 0)==0);
-                        helper_fd=openat(dirfd(cwd), command_buffer+9, O_WRONLY|O_CREAT,00700);
+                        helper_fd=openat(dirfd(cwd), command_buffer+9, O_WRONLY|O_CREAT,00644);
                         if(helper_fd<0){    //OLD should always return a '+'
                             helper_fd=-1;
                             open_errno=errno;
@@ -372,7 +381,7 @@ void sftp_conn(void* pfh){
                     }else{
                         option=2;
                         int exist=(faccessat(dirfd(cwd), command_buffer+9, W_OK, 0)==0);
-                        helper_fd=openat(dirfd(cwd), command_buffer+9, O_WRONLY|O_CREAT,00700);
+                        helper_fd=openat(dirfd(cwd), command_buffer+9, O_WRONLY|O_CREAT,00644);
                         if(helper_fd<0){    //APP should always return a '+'
                             helper_fd=-1;
                             open_errno=errno;
@@ -427,14 +436,19 @@ void sftp_conn(void* pfh){
                                     ex_fhprintf_async(fh, "+ok, waiting for file");
                                     ex_putchar_async(fh, 0);
                                     enable_nagle(fh);
-                                    uint64_t entire_buffers=size/1024;
-                                    uint64_t remaining=size%1024;
+                                    uint64_t received_size=0;
+                                    uint64_t entire_buffers=size/8192;
+                                    uint64_t remaining=size%8192;
                                     for(int i=0;i<entire_buffers;i++){
-                                        ex_fread_async(fh, data_buffer, 1024);
-                                        write(helper_fd, data_buffer, 1024);
+                                        ex_fread_async(fh, data_buffer, 8192);
+                                        write(helper_fd, data_buffer, 8192);
+                                        received_size+=8192;
+                                        //printf("progress: %ld/%ld\n", received_size, size);
                                     }
                                     ex_fread_async(fh, data_buffer, remaining);
                                     write(helper_fd, data_buffer, remaining);
+                                    received_size+=remaining;
+                                    //printf("progress: %ld/%ld\n", received_size, size);
                                     disable_nagle(fh);
                                     close(helper_fd);
                                     helper_fd=-1;

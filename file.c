@@ -79,7 +79,7 @@ file_handle* wrap_fd(int fd){
 }
 
 void destroy_fh(file_handle* fh){
-    close(fh->fd);
+    //close(fh->fd);
     fh->destroyed=1;
 }
 
@@ -145,6 +145,7 @@ size_t fread_async(file_handle* fh, void* buf, size_t count){
     size_t read_count=0;
     // step 1: try to fill buf with buffer.
     int content_size=fh->write_pos-fh->read_pos;
+    //printf("content_size: %d\n", content_size);
     if(count<=content_size){
         memcpy(buf, fh->buffer+fh->read_pos, count);
         fh->read_pos+=count;
@@ -159,6 +160,7 @@ size_t fread_async(file_handle* fh, void* buf, size_t count){
     int remaining=count-read_count;
     int entire_buffers=remaining/fh->buffer_size;
     int read_through_bytes=entire_buffers*fh->buffer_size;
+    //printf("%d %d %d\n", remaining, entire_buffers, read_through_bytes);
     // for entire-buffer case: read through and save a copy.
     while(read_through_bytes>0){
         ssize_t ret=read_async(fh, ((size_t)buf)+read_count, read_through_bytes);
@@ -183,7 +185,7 @@ size_t fread_async(file_handle* fh, void* buf, size_t count){
         }
     }
     size_t residue_start=((size_t)buf)+read_count;
-    int residue=remaining-read_through_bytes;
+    int residue=remaining-(entire_buffers*fh->buffer_size);
 //    printf("residue: %d %d\n", residue, read_count);
     if(residue>0){
         int received_bytes=0;
@@ -241,7 +243,7 @@ int fhprintf_async(file_handle* fh, const char* format, ...){
 
 void ex_fread_async(file_handle* fh, void* buf, size_t count){
     size_t read_size=fread_async(fh, buf, count);
-    //printf("%d\n", read_size);
+    //printf("[ex_fread_async] %d %d\n", read_size, count);
     if(read_size!=count) coroutine_throw;
 }
 
@@ -270,18 +272,24 @@ char ex_getchar_async(file_handle* fh){
 
 // Creates a timerfd, read_async the timerfd and come back.
 void sleep_async(long milliseconds){
+    //printf("start sleeping\n");
     int timer_fd=timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK); //non-blocking timer.
+    assert(timer_fd>=0);
     struct itimerspec timer_spec;
     memset(&timer_spec, 0, sizeof(struct itimerspec));
     timer_spec.it_value.tv_sec=milliseconds/1000;
     timer_spec.it_value.tv_nsec=((long)(milliseconds%1000))*1000*1000;
-    timerfd_settime(timer_fd, 0, &timer_spec, 0);
+    int ret=timerfd_settime(timer_fd, 0, &timer_spec, 0);
+    assert(ret==0);
     file_handle* timer_fh=wrap_fd(timer_fd);
     register_file(global_queue, timer_fh); //This requires that we have one and only one event queue.
     char buf[64];
+    while(read(timer_fh->fd, buf, 64)!=-1);
+    //printf("sleep on timer %x(%d)\n", timer_fh, timer_fh->fd);
     read_async(timer_fh, buf, 64); //sleep here.
     // when the coroutine finally wakes up, destroy the timer_fd.
     destroy_fh(timer_fh);
+    //printf("stop sleeping\n");
 }
 
 // disable nagle's algorithm, for interactive purposes.

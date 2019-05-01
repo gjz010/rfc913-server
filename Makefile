@@ -1,5 +1,6 @@
-CFLAGS=-std=c99 -O2 -w
-all: file_server
+CFLAGS=-std=c99 -O2
+CPPFLAGS=-O2
+all: file_server client
 file.o: file.c file.h
 	gcc $(CFLAGS) file.c -c -o file.o
 poll.o: poll.c poll.h
@@ -16,6 +17,8 @@ sftp.o: sftp.c
 	gcc $(CFLAGS) sftp.c -c -o sftp.o
 file_server: file.o poll.o coroutine.o sftp.o switch.o main.o listen_server.o
 	gcc $(CFLAGS) file.o poll.o coroutine.o sftp.o switch.o listen_server.o main.o -o file_server
+client: client.cpp
+	g++ $(CPPFLAGS) client.cpp -o client
 .PHONY: clean
 clean:
-	rm *.o file_server
+	rm *.o file_server client

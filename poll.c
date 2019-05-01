@@ -47,6 +47,7 @@ int poll_once(poll_queue* q){
 
 
 void register_file(poll_queue* q, file_handle* file){
+    //printf("register %x\n", file);
     struct epoll_event ev;
     ev.events=EPOLLIN|EPOLLOUT|EPOLLET|EPOLLRDHUP;
     ev.data.ptr=file;
@@ -55,6 +56,8 @@ void register_file(poll_queue* q, file_handle* file){
 }
 
 void unregister_file(poll_queue* q, file_handle* file){
+    //printf("unregister %x\n", file);
+    close(file->fd);
     q->counter--;
     //if(q->counter==1) exit(0);
     epoll_ctl(q->epoll_fd, EPOLL_CTL_DEL, file->fd, 0);
